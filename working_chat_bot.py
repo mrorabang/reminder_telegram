@@ -177,7 +177,7 @@ class TaskReminder:
                 else:
                     return False, "❌ Không thể đọc deadline. Format: 20h59 17/1/2026 hoặc 13H 17/1"
             else:
-                return False, "Format sai: link order_id input_date time_deadline date_deadline"
+                return False, "Wrong format. Example: [ghn.com VN12345 1/1/2026 13h 2/1/2026]"
         except Exception as e:
             return False, f"❌ Lỗi: {e}"
     
@@ -298,17 +298,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command"""
     await update.message.reply_text(
         "🤖 Bot Nhắc Hẹn Công Việc\n\n"
-        "📝 Cách thêm công việc:\n"
-        "Gửi tin nhắn với format:\n"
-        "link | mã đơn | ngày_tạo | giờ_deadline | ngày_deadline\n"
-        "link , mã đơn , ngày_tạo , giờ_deadline , ngày_deadline\n"
-        "link ; mã đơn ; ngày_tạo ; giờ_deadline ; ngày_deadline\n"
-        "Hoặc: link mã đơn ngày_tạo giờ_deadline ngày_deadline\n\n"
-        "📅 Format deadline: 20h59 17/1/2026 (20 giờ 59 phút ngày 17/1/2026)\n"
-        "📅 Format cũ: 13H 17/1 hoặc 13h30 17/1 (vẫn hỗ trợ)\n\n"
+    
         "📋 Các lệnh:\n"
         "/start - Hiển thị hướng dẫn\n"
         "/list - Xem danh sách công việc\n"
+        "/del <index> - Xóa task theo số thứ tự\n"
         "/help - Trợ giúp\n\n"
         "Bot sẽ tự động nhắc hẹn 30 phút trước deadline!"
     )
@@ -325,22 +319,59 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "🔹 Format cũ (vẫn hỗ trợ):\n"
         "https://link.com | VNGH123 | 16-thg 1 | 13H 17/1\n\n"
         "🔹 Xem danh sách: /list\n"
+        "🔹 Xóa task: /del 1 (xóa task số 1)\n"
         "🔹 Nhắc hẹn: Tự động 30 phút trước deadline\n\n"
         "⚠️ Lưu ý: Dùng | , ; hoặc space để phân cách các cột"
     )
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /list command"""
-    if not reminder.tasks:
-        await update.message.reply_text("📭 Không có công việc nào trong danh sách")
-        return
-    
     message = "📋 Danh sách công việc:\n\n"
-    for i, task in enumerate(reminder.tasks, 1):
-        message += f"{i}. {task['order_id']} - {task['deadline']}\n"
-        message += f"   🔗 {task['link']}\n\n"
+    
+    if not reminder.tasks:
+        message += "📭 Không có công việc nào."
+    else:
+        for i, task in enumerate(reminder.tasks, 1):
+            message += f"{i}. {task['order_id']} - {task['deadline']}\n"
+            message += f"   🔗 {task['link']}\n\n"
     
     await update.message.reply_text(message)
+
+async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /del command - delete task by index"""
+    try:
+        # Get index from command
+        if not context.args:
+            await update.message.reply_text("❌ Vui lòng nhập index: /del 1")
+            return
+        
+        index = int(context.args[0])
+        
+        # Check if index is valid
+        if index < 1 or index > len(reminder.tasks):
+            await update.message.reply_text(f"❌ Index không hợp lệ. Có {len(reminder.tasks)} tasks (1-{len(reminder.tasks)})")
+            return
+        
+        # Get task to delete
+        task_to_delete = reminder.tasks[index - 1]
+        order_id = task_to_delete['order_id']
+        deadline = task_to_delete['deadline']
+        
+        # Remove task
+        reminder.tasks.pop(index - 1)
+        reminder.save_tasks()
+        
+        await update.message.reply_text(
+            f"✅ Đã xóa task #{index}\n"
+            f"📋 Mã đơn: {order_id}\n"
+            f"� Deadline: {deadline}\n"
+            f"📊 Còn {len(reminder.tasks)} tasks trong danh sách."
+        )
+        
+    except ValueError:
+        await update.message.reply_text("❌ Index phải là số nguyên. Ví dụ: /del 1")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Lỗi: {e}")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming messages"""
@@ -404,10 +435,11 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("list", list_tasks))
+    application.add_handler(CommandHandler("del", delete_task))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("Bot started successfully!")
-    print("Commands: /start, /help, /list")
+    print("Commands: /start, /help, /list, /del")
     print("Reminder checker running in background thread...")
     
     # Run the bot
