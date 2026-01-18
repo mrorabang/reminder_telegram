@@ -18,7 +18,7 @@ CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
 
 class TaskReminder:
     def __init__(self):
-        self.tasks = []
+        self.user_tasks = {}  # {user_id: [tasks]}
         self.reminded_tasks = set()
         self.tasks_file = 'tasks.txt'
         self.bot = None
@@ -31,21 +31,25 @@ class TaskReminder:
         """Load tasks from file"""
         try:
             with open(self.tasks_file, 'r', encoding='utf-8') as f:
-                tasks_text = f.read()
-            self.add_tasks_from_text(tasks_text)
-            print(f"Loaded {len(self.tasks)} tasks from file")
+                lines = f.readlines()
+                # Load tasks for default user (backward compatibility)
+                self.user_tasks[CHAT_ID] = []
+                self.add_tasks_from_text(''.join(lines), CHAT_ID)
         except FileNotFoundError:
-            print("No tasks file found, starting fresh")
+            print("No tasks file found, starting with empty list")
+            self.user_tasks[CHAT_ID] = []
         except Exception as e:
             print(f"Error loading tasks: {e}")
+            self.user_tasks[CHAT_ID] = []
     
     def save_tasks(self):
         """Save tasks to file"""
         try:
             with open(self.tasks_file, 'w', encoding='utf-8') as f:
-                for task in self.tasks:
-                    f.write(task['raw_line'] + '\n')
-            print(f"Saved {len(self.tasks)} tasks to file")
+                for user_id, tasks in self.user_tasks.items():
+                    for task in tasks:
+                        f.write(task['raw_line'] + '\n')
+            print(f"Saved {sum(len(tasks) for tasks in self.user_tasks.values())} tasks to file")
         except Exception as e:
             print(f"Error saving tasks: {e}")
     
@@ -158,8 +162,8 @@ class TaskReminder:
             print(f"Error parsing deadline '{deadline_str}': {e}")
         return None
     
-    def add_task_from_message(self, message_text):
-        """Add task from chat message"""
+    def add_task_from_message(self, message_text, user_id):
+        """Add task from message text"""
         try:
             task = self.parse_task_line(message_text)
             if task:
@@ -168,10 +172,13 @@ class TaskReminder:
                     task['deadline_dt'] = deadline_dt
                     
                     # Check for EXACT duplicate (all fields) in current tasks
-                    if self.is_exact_duplicate(task):
+                    if self.is_exact_duplicate(task, user_id):
                         return False, f"🚫 REJECT: Ticket này đã tồn tại trong danh sách!"
                     
-                    self.tasks.append(task)
+                    if user_id not in self.user_tasks:
+                        self.user_tasks[user_id] = []
+                        
+                    self.user_tasks[user_id].append(task)
                     self.save_tasks()
                     return True, f"✅ Đã thêm công việc: {task['order_id']} - Deadline: {task['deadline']}"
                 else:
@@ -181,16 +188,28 @@ class TaskReminder:
         except Exception as e:
             return False, f"❌ Lỗi: {e}"
     
-    def find_task_by_order_id(self, order_id):
+    def find_task_by_order_id(self, order_id, user_id=None):
         """Find task by order_id"""
-        for task in self.tasks:
+        if user_id is None:
+            user_id = CHAT_ID
+            
+        if user_id not in self.user_tasks:
+            return None
+            
+        for task in self.user_tasks[user_id]:
             if task['order_id'] == order_id:
                 return task
         return None
     
-    def is_exact_duplicate(self, new_task):
+    def is_exact_duplicate(self, new_task, user_id=None):
         """Check if task is exact duplicate of existing task"""
-        for existing_task in self.tasks:
+        if user_id is None:
+            user_id = CHAT_ID
+            
+        if user_id not in self.user_tasks:
+            return False
+            
+        for existing_task in self.user_tasks[user_id]:
             if (existing_task['link'] == new_task['link'] and
                 existing_task['order_id'] == new_task['order_id'] and
                 existing_task['input_date'] == new_task['input_date'] and
@@ -198,8 +217,14 @@ class TaskReminder:
                 return True
         return False
     
-    def add_tasks_from_text(self, text):
+    def add_tasks_from_text(self, text, user_id=None):
         """Add tasks from multiline text"""
+        if user_id is None:
+            user_id = CHAT_ID
+            
+        if user_id not in self.user_tasks:
+            self.user_tasks[user_id] = []
+            
         lines = text.strip().split('\n')
         for line in lines:
             task = self.parse_task_line(line)
@@ -208,9 +233,9 @@ class TaskReminder:
                 if deadline_dt:
                     task['deadline_dt'] = deadline_dt
                     # Check for duplicates when loading from file
-                    existing_task = self.find_task_by_order_id(task['order_id'])
+                    existing_task = self.find_task_by_order_id(task['order_id'], user_id)
                     if not existing_task:
-                        self.tasks.append(task)
+                        self.user_tasks[user_id].append(task)
     
     def check_reminders(self):
         """Check for tasks that need reminder (30 minutes before deadline)"""
@@ -218,35 +243,39 @@ class TaskReminder:
         reminders = []
         tasks_to_remove = []
         
-        # Group tasks by order_id to avoid duplicate reminders
-        processed_order_ids = set()
-        
-        for task in self.tasks:
-            order_id = task['order_id']
+        # Check each user's tasks
+        for user_id, tasks in self.user_tasks.items():
+            # Group tasks by order_id to avoid duplicate reminders
+            processed_order_ids = set()
             
-            # Skip if we already processed this order_id
-            if order_id in processed_order_ids:
-                continue
-            
-            task_key = f"{task['order_id']}_{task['deadline']}"
-            
-            if task_key in self.reminded_tasks:
-                processed_order_ids.add(order_id)
-                continue
-            
-            deadline_dt = task['deadline_dt']
-            reminder_time = deadline_dt - timedelta(minutes=30)
-            
-            if abs((now - reminder_time).total_seconds()) < 60:
-                reminders.append(task)
-                self.reminded_tasks.add(task_key)
-                processed_order_ids.add(order_id)
-                tasks_to_remove.append(task)
+            for task in tasks:
+                order_id = task['order_id']
+                
+                # Skip if we already processed this order_id
+                if order_id in processed_order_ids:
+                    continue
+                
+                task_key = f"{task['order_id']}_{task['deadline']}"
+                
+                if task_key in self.reminded_tasks:
+                    processed_order_ids.add(order_id)
+                    continue
+                
+                deadline_dt = task['deadline_dt']
+                reminder_time = deadline_dt - timedelta(minutes=30)
+                
+                if abs((now - reminder_time).total_seconds()) < 60:
+                    # Add user_id to task for sending reminder
+                    task['user_id'] = user_id
+                    reminders.append(task)
+                    self.reminded_tasks.add(task_key)
+                    processed_order_ids.add(order_id)
+                    tasks_to_remove.append((user_id, task))
         
         # Remove tasks that were reminded
-        for task in tasks_to_remove:
-            self.tasks.remove(task)
-            print(f"🗑️ Đã xóa ticket {task['order_id']} khỏi danh sách sau khi nhắc hẹn")
+        for user_id, task in tasks_to_remove:
+            self.user_tasks[user_id].remove(task)
+            print(f"🗑️ Đã xóa ticket {task['order_id']} của user {user_id} khỏi danh sách sau khi nhắc hẹn")
         
         if tasks_to_remove:
             self.save_tasks()
@@ -258,6 +287,8 @@ class TaskReminder:
         if not self.bot:
             return
             
+        user_id = task.get('user_id', CHAT_ID)
+            
         message = f"⏰ NHẮC NHỞ ĐƠN HÀNG\n\n"
         message += f"📋 Mã đơn: {task['order_id']}\n"
         message += f"📅 Deadline: {task['deadline']}\n"
@@ -266,12 +297,12 @@ class TaskReminder:
         
         try:
             await self.bot.send_message(
-                chat_id=CHAT_ID,
+                chat_id=user_id,
                 text=message
             )
-            print(f"Sent reminder for order: {task['order_id']}")
+            print(f"Sent reminder for order: {task['order_id']} to user {user_id}")
         except Exception as e:
-            print(f"Error sending reminder: {e}")
+            print(f"Error sending reminder to user {user_id}: {e}")
 
 # Global reminder instance
 reminder = TaskReminder()
@@ -326,12 +357,13 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /list command"""
-    message = "📋 Danh sách công việc:\n\n"
+    user_id = update.message.from_user.id
+    message = "📋 Danh sách công việc của bạn:\n\n"
     
-    if not reminder.tasks:
+    if user_id not in reminder.user_tasks or not reminder.user_tasks[user_id]:
         message += "📭 Không có công việc nào."
     else:
-        for i, task in enumerate(reminder.tasks, 1):
+        for i, task in enumerate(reminder.user_tasks[user_id], 1):
             message += f"{i}. {task['order_id']} - {task['deadline']}\n"
             message += f"   🔗 {task['link']}\n\n"
     
@@ -339,6 +371,8 @@ async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /del command - delete task by index"""
+    user_id = update.message.from_user.id
+    
     try:
         # Get index from command
         if not context.args:
@@ -347,25 +381,30 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         
         index = int(context.args[0])
         
+        # Check if user has tasks
+        if user_id not in reminder.user_tasks or not reminder.user_tasks[user_id]:
+            await update.message.reply_text("❌ Bạn không có công việc nào để xóa.")
+            return
+        
         # Check if index is valid
-        if index < 1 or index > len(reminder.tasks):
-            await update.message.reply_text(f"❌ Index không hợp lệ. Có {len(reminder.tasks)} tasks (1-{len(reminder.tasks)})")
+        if index < 1 or index > len(reminder.user_tasks[user_id]):
+            await update.message.reply_text(f"❌ Index không hợp lệ. Có {len(reminder.user_tasks[user_id])} tasks (1-{len(reminder.user_tasks[user_id])})")
             return
         
         # Get task to delete
-        task_to_delete = reminder.tasks[index - 1]
+        task_to_delete = reminder.user_tasks[user_id][index - 1]
         order_id = task_to_delete['order_id']
         deadline = task_to_delete['deadline']
         
         # Remove task
-        reminder.tasks.pop(index - 1)
+        reminder.user_tasks[user_id].pop(index - 1)
         reminder.save_tasks()
         
         await update.message.reply_text(
             f"✅ Đã xóa task #{index}\n"
             f"📋 Mã đơn: {order_id}\n"
-            f"� Deadline: {deadline}\n"
-            f"📊 Còn {len(reminder.tasks)} tasks trong danh sách."
+            f"📅 Deadline: {deadline}\n"
+            f"📊 Còn {len(reminder.user_tasks[user_id])} tasks trong danh sách."
         )
         
     except ValueError:
@@ -376,23 +415,24 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle incoming messages"""
     message_text = update.message.text
+    user_id = update.message.from_user.id
     
     # Debug: print actual message received
-    print(f"Received message: '{message_text}'")
+    print(f"Received message from user {user_id}: '{message_text}'")
     print(f"Message length: {len(message_text)}")
     print(f"Message bytes: {message_text.encode('utf-8')}")
     
     # Check if message contains multiple lines
     if '\n' in message_text:
-        # Handle multiline message
+        # Handle multiline input
+        lines = message_text.strip().split('\n')
         added_count = 0
         duplicate_count = 0
         error_count = 0
         
-        lines = message_text.strip().split('\n')
         for line in lines:
             if line.strip():  # Skip empty lines
-                success, response = reminder.add_task_from_message(line.strip())
+                success, response = reminder.add_task_from_message(line.strip(), user_id)
                 if success:
                     added_count += 1
                 elif "REJECT" in response:
@@ -400,7 +440,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 else:
                     error_count += 1
         
-        # response_msg = f"📊 Kết quả:\n"
+        response_msg = f"📊 Kết quả:\n"
         response_msg += f"✅ Thêm thành công: {added_count} tickets\n"
         if duplicate_count > 0:
             response_msg += f"🔄 Trùng lặp: {duplicate_count} tickets\n"
@@ -410,7 +450,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(response_msg)
     else:
         # Handle single line message
-        success, response = reminder.add_task_from_message(message_text)
+        success, response = reminder.add_task_from_message(message_text, user_id)
         await update.message.reply_text(response)
 
 async def post_init(application: Application) -> None:
