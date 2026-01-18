@@ -184,7 +184,7 @@ class TaskReminder:
                 else:
                     return False, "❌ Không thể đọc deadline. Format: 20h59 17/1/2026 hoặc 13H 17/1"
             else:
-                return False, "Wrong format. Example: [ghn.com VN12345 1/1/2026 13h 2/1/2026]"
+                return False, "Sai format rồi người đẹp❤️. Example: [ghn.com VN12345 1/1/2026 13h 2/1/2026]"
         except Exception as e:
             return False, f"❌ Lỗi: {e}"
     
@@ -289,11 +289,11 @@ class TaskReminder:
             
         user_id = task.get('user_id', CHAT_ID)
             
-        message = f"⏰ NHẮC NHỞ ĐƠN HÀNG\n\n"
+        message = f"⏰ NHẮC NHỞ DEADLINE\n\n"
         message += f"📋 Mã đơn: {task['order_id']}\n"
         message += f"📅 Deadline: {task['deadline']}\n"
         message += f"🔗 Link xử lý: {task['link']}\n\n"
-        message += f"⚠️ Còn 30 phút nữa đến deadline!"
+        message += f"⚠️ Còn 30 phút nữa đến deadline nhé người đẹp! Yêu mình nhiều ❤️"
         
         try:
             await self.bot.send_message(
@@ -328,14 +328,14 @@ def reminder_checker_thread():
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command"""
     await update.message.reply_text(
-        "🤖 Bot Nhắc Hẹn Công Việc\n\n"
+        "❤️ Bot Nhắc Hẹn Công Việc ❤️\n\n"
     
-        "📋 Các lệnh:\n"
+        "Các lệnh:\n"
         "/start - Hiển thị hướng dẫn\n"
         "/list - Xem danh sách công việc\n"
-        "/del <index> - Xóa task theo số thứ tự\n"
+        "/del - Xóa task theo số thứ tự\n"
         "/help - Trợ giúp\n\n"
-        "Bot sẽ tự động nhắc hẹn 30 phút trước deadline!"
+        "Bot sẽ tự động nhắc hẹn 30 phút trước deadline đó người đẹp ❤️!"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -358,10 +358,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def list_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /list command"""
     user_id = update.message.from_user.id
-    message = "📋 Danh sách công việc của bạn:\n\n"
+    message = "❤️ Danh sách công việc của người đẹp:\n\n"
     
     if user_id not in reminder.user_tasks or not reminder.user_tasks[user_id]:
-        message += "📭 Không có công việc nào."
+        message += "Không có công việc nào.Nhưng hãy cười nhiều nhé người đẹp ❤️"
     else:
         for i, task in enumerate(reminder.user_tasks[user_id], 1):
             message += f"{i}. {task['order_id']} - {task['deadline']}\n"
@@ -440,10 +440,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 else:
                     error_count += 1
         
-        response_msg = f"📊 Kết quả:\n"
-        response_msg += f"✅ Thêm thành công: {added_count} tickets\n"
+        response_msg = f"Kết quả:\n"
+        response_msg += f"✅ Thêm thành công: {added_count} tickets❤️\n"
         if duplicate_count > 0:
-            response_msg += f"🔄 Trùng lặp: {duplicate_count} tickets\n"
+            response_msg += f"🔄 Trùng lặp: {duplicate_count} tickets❤️\n"
         if error_count > 0:
             response_msg += f"❌ Lỗi: {error_count} tickets"
         
