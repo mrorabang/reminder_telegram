@@ -216,16 +216,16 @@ class TaskReminder:
                     
                     # Check for EXACT duplicate (all fields) in current tasks
                     if self.is_exact_duplicate(task, user_id):
-                        return False, f"🚫 REJECT: Ticket này đã tồn tại trong danh sách!"
+                        return False, f"🚫 Ticket này đã tồn tại trong danh sách!"
                     
                     if user_id not in self.user_tasks:
                         self.user_tasks[user_id] = []
                         
                     self.user_tasks[user_id].append(task)
                     self.save_tasks()
-                    return True, f"✅ Đã thêm công việc: {task['order_id']} - Deadline: {task['deadline']}"
+                    return True, f"✅ Đã thêm deadline: {task['order_id']} - Deadline: {task['deadline']}"
                 else:
-                    return False, "❌ Không thể đọc deadline. Format: 20h59 17/1/2026 hoặc 13H 17/1"
+                    return False, "❌ Không thể đọc deadline. Format: [ghn.com VN12345 1/1/2026 13h 2/1/2026]"
             else:
                 return False, "Sai format rồi người đẹp❤️. Example: [ghn.com VN12345 1/1/2026 13h 2/1/2026]"
         except Exception as e:
@@ -428,7 +428,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start - Hiển thị hướng dẫn\n"
         "/list - Xem danh sách công việc\n"
         "/del - Xóa task theo số thứ tự\n"
-        "/st <thời gian> - Đặt giờ chào buổi sáng (ví dụ: /st 10h30)\n"
+        "/st - Đặt giờ chào buổi sáng (ví dụ: /st 10h30)\n"
         "/morning - Gửi lời chào buổi sáng ngay lập tức\n"
         "/help - Trợ giúp\n\n"
         "Bot sẽ tự động nhắc hẹn 30 phút trước deadline đó người đẹp ❤️!"
@@ -505,7 +505,7 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             reminder.save_tasks()
             
             await update.message.reply_text(
-                f"✅ Đã xóa toàn bộ {total_tasks} tasks của bạn."
+                f"✅ Đã xóa toàn bộ {total_tasks} tickets của bạn❤️."
             )
             return
 
@@ -532,10 +532,10 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         reminder.save_tasks()
         
         await update.message.reply_text(
-            f"✅ Đã xóa task #{index}\n"
+            f"✅ Đã xóa ticket #{index}\n"
             f"📋 Mã đơn: {order_id}\n"
             f"📅 Deadline: {deadline}\n"
-            f"📊 Còn {len(reminder.user_tasks[user_id])} tasks trong danh sách."
+            f"📊 Còn {len(reminder.user_tasks[user_id])} tickets trong danh sách."
         )
         
     except ValueError:
