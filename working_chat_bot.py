@@ -21,9 +21,11 @@ class TaskReminder:
         self.user_tasks = {}  # {user_id: [tasks]}
         self.reminded_tasks = set()
         self.tasks_file = 'tasks.txt'
+        self.users_file = 'users.txt'  # File to store user IDs
         self.bot = None
         self.daily_greeting_sent = set()  # Track daily greetings sent {date: set(user_ids)}
         self.all_users = set()  # Track all users who have ever interacted with bot
+        self.morning_greeting_time = '09:00'  # Default morning greeting time
         
     def set_bot(self, bot):
         """Set bot instance for sending messages"""
@@ -54,6 +56,42 @@ class TaskReminder:
             print(f"Saved {sum(len(tasks) for tasks in self.user_tasks.values())} tasks to file")
         except Exception as e:
             print(f"Error saving tasks: {e}")
+    
+    def load_users(self):
+        """Load user IDs from file"""
+        try:
+            with open(self.users_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    user_id = line.strip()
+                    if user_id and user_id.isdigit():
+                        self.all_users.add(int(user_id))
+            print(f"Loaded {len(self.all_users)} users from file")
+        except FileNotFoundError:
+            print("No users file found, starting with empty user list")
+        except Exception as e:
+            print(f"Error loading users: {e}")
+    
+    def save_user(self, user_id):
+        """Save a single user ID to file"""
+        try:
+            # Check if user already exists in file
+            users_in_file = set()
+            try:
+                with open(self.users_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        uid = line.strip()
+                        if uid and uid.isdigit():
+                            users_in_file.add(int(uid))
+            except FileNotFoundError:
+                pass
+            
+            # Add new user if not already exists
+            if user_id not in users_in_file:
+                with open(self.users_file, 'a', encoding='utf-8') as f:
+                    f.write(f"{user_id}\n")
+                print(f"Saved user {user_id} to file")
+        except Exception as e:
+            print(f"Error saving user {user_id}: {e}")
     
     def parse_task_line(self, line):
         """Parse task line format: link  order_id  ngay_tao  gio_deadline  ngay_deadline"""
@@ -348,11 +386,10 @@ def reminder_checker_thread():
                 for task in reminders:
                     loop.run_until_complete(reminder.send_reminder(task))
             
-            # Check for morning greeting at 9:00 AM
-            if current_time == '09:00':
-                # Send to all users who have ever interacted + default user
-                users_to_greet = self.all_users.copy()
-                users_to_greet.add(CHAT_ID)  # Always include default user
+            # Check for morning greeting at configured time
+            if current_time == reminder.morning_greeting_time:
+                # Send to all users in users.txt file
+                users_to_greet = reminder.all_users.copy()
                 
                 for user_id in users_to_greet:
                     greeting_key = f"{current_date}_{user_id}"
@@ -374,8 +411,15 @@ def reminder_checker_thread():
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command"""
-    # Add user to all_users
-    reminder.all_users.add(update.message.from_user.id)
+    user = update.message.from_user
+    if not user:
+        return
+        
+    user_id = user.id
+    
+    # Add user to all_users set and save to file
+    reminder.all_users.add(user_id)
+    reminder.save_user(user_id)
     
     await update.message.reply_text(
         "❤️ Bot Nhắc Hẹn Công Việc ❤️\n\n"
@@ -384,6 +428,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start - Hiển thị hướng dẫn\n"
         "/list - Xem danh sách công việc\n"
         "/del - Xóa task theo số thứ tự\n"
+        "/st <thời gian> - Đặt giờ chào buổi sáng (ví dụ: /st 10h30)\n"
         "/morning - Gửi lời chào buổi sáng ngay lập tức\n"
         "/help - Trợ giúp\n\n"
         "Bot sẽ tự động nhắc hẹn 30 phút trước deadline đó người đẹp ❤️!"
@@ -391,8 +436,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command"""
-    # Add user to all_users
-    reminder.all_users.add(update.message.from_user.id)
+    user = update.message.from_user
+    if not user:
+        return
+        
+    user_id = user.id
+    
+    # Add user to all_users set and save to file
+    reminder.all_users.add(user_id)
+    reminder.save_user(user_id)
     await update.message.reply_text(
         "📖 Trợ giúp Bot Nhắc Hẹn\n\n"
         "🔹 Thêm công việc:\n"
@@ -432,12 +484,33 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     reminder.all_users.add(user_id)
     
     try:
-        # Get index from command
+        # Get argument from command (/del <index>|all)
         if not context.args:
-            await update.message.reply_text("❌ Vui lòng nhập index: /del 1")
+            await update.message.reply_text("❌ Vui lòng nhập index hoặc 'all': /del 1 hoặc /del all")
             return
-        
-        index = int(context.args[0])
+
+        arg0 = context.args[0].lower()
+
+        # Handle 'all' option
+        if arg0 == 'all':
+            # Check if user has tasks
+            if user_id not in reminder.user_tasks or not reminder.user_tasks[user_id]:
+                await update.message.reply_text("❌ Bạn không có công việc nào để xóa.")
+                return
+
+            total_tasks = len(reminder.user_tasks[user_id])
+            
+            # Delete all tasks for this user
+            reminder.user_tasks[user_id] = []
+            reminder.save_tasks()
+            
+            await update.message.reply_text(
+                f"✅ Đã xóa toàn bộ {total_tasks} tasks của bạn."
+            )
+            return
+
+        # Otherwise, treat argument as index
+        index = int(arg0)
         
         # Check if user has tasks
         if user_id not in reminder.user_tasks or not reminder.user_tasks[user_id]:
@@ -466,7 +539,7 @@ async def delete_task(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         
     except ValueError:
-        await update.message.reply_text("❌ Index phải là số nguyên. Ví dụ: /del 1")
+        await update.message.reply_text("❌ Index phải là số nguyên hoặc 'all'. Ví dụ: /del 1 hoặc /del all")
     except Exception as e:
         await update.message.reply_text(f"❌ Lỗi: {e}")
 
@@ -513,6 +586,67 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         success, response = reminder.add_task_from_message(message_text, user_id)
         await update.message.reply_text(response)
 
+async def set_morning_time(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle /st command - set morning greeting time"""
+    user = update.message.from_user
+    if not user:
+        return
+        
+    user_id = user.id
+    
+    # Add user to all_users (local tracking)
+    reminder.all_users.add(user_id)
+    
+    try:
+        # Get time from command
+        if not context.args:
+            await update.message.reply_text("❌ Vui lòng nhập thời gian: /st 10h30")
+            return
+        
+        time_str = context.args[0].lower()
+        
+        # Parse time format (10h30, 10h, 10:30)
+        if 'h' in time_str:
+            # Format: 10h30 or 10h
+            if ':' in time_str:
+                # 10:30 format
+                hour_min = time_str.split(':')
+                hour = int(hour_min[0])
+                minute = int(hour_min[1])
+            else:
+                # 10h30 format
+                parts = time_str.split('h')
+                hour = int(parts[0])
+                minute = int(parts[1]) if len(parts) > 1 and parts[1] else 0
+        else:
+            # Try parsing as HH:MM
+            if ':' in time_str:
+                hour_min = time_str.split(':')
+                hour = int(hour_min[0])
+                minute = int(hour_min[1])
+            else:
+                hour = int(time_str)
+                minute = 0
+        
+        # Validate time
+        if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+            await update.message.reply_text("❌ Thời gian không hợp lệ. Vui lòng nhập 0-23h và 0-59 phút")
+            return
+        
+        # Format time as HH:MM
+        new_time = f"{hour:02d}:{minute:02d}"
+        reminder.morning_greeting_time = new_time
+        
+        await update.message.reply_text(
+            f"✅ Đã đặt thời gian chào buổi sáng: {new_time}"
+            f"\n📅 Bot sẽ gửi lời chào lúc {new_time} mỗi ngày."
+        )
+        
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Định dạng thời gian không hợp lệ. Ví dụ: /st 10h30 hoặc /st 10:30")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Lỗi: {e}")
+
 async def morning_greeting(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /morning command - send morning greeting immediately"""
     user_id = update.message.from_user.id
@@ -539,8 +673,9 @@ async def post_init(application: Application) -> None:
 
 def main():
     """Start the bot"""
-    # Load existing tasks
+    # Load existing tasks and users
     reminder.load_tasks()
+    reminder.load_users()
     
     # Create application
     application = Application.builder().token(TOKEN).post_init(post_init).build()
@@ -550,11 +685,12 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("list", list_tasks))
     application.add_handler(CommandHandler("del", delete_task))
+    application.add_handler(CommandHandler("st", set_morning_time))
     application.add_handler(CommandHandler("morning", morning_greeting))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("Bot started successfully!")
-    print("Commands: /start, /help, /list, /del, /morning")
+    print("Commands: /start, /help, /list, /del, /st, /morning")
     print("Reminder checker running in background thread...")
     
     # Run the bot
